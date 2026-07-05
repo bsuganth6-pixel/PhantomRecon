@@ -172,4 +172,3 @@ phantomrecon/
 
 ---
 
-*Day 6 of the Phantom Security toolkit. Next up: PhantomFuzzer.*
