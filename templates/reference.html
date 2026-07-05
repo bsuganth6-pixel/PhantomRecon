@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+{% block title %}Reference — PhantomRecon{% endblock %}
+{% block content %}
+
+<div class="card">
+  <div class="card-title"><i class="fa-solid fa-shield-halved"></i> Responsible Use</div>
+  <p style="font-size:12.5px;color:var(--text-mid);line-height:1.6">
+    Everything PhantomRecon gathers is <strong style="color:var(--text-hi)">passive, publicly available
+    OSINT</strong> — WHOIS records, DNS, certificate transparency logs, and content already published on
+    the target's own public pages. This is the same standard reconnaissance phase used in authorized
+    penetration testing and bug bounty programs. It does not exploit, brute-force, or access anything
+    non-public. Always have authorization before conducting reconnaissance against a domain you don't own.
+  </p>
+</div>
+
+<div class="card">
+  <div class="card-title"><i class="fa-solid fa-id-card"></i> WHOIS</div>
+  <p style="font-size:12.5px;color:var(--text-mid);margin-bottom:10px">
+    Raw WHOIS protocol (RFC 3912) implemented from scratch — TCP port 43. Follows the standard referral
+    chain: IANA bootstrap → TLD registry → registrar (for gTLDs like .com/.net where Verisign is the
+    registry but the registrar holds full details).
+  </p>
+</div>
+
+<div class="card">
+  <div class="card-title"><i class="fa-solid fa-server"></i> DNS Records</div>
+  <p style="font-size:12.5px;color:var(--text-mid);margin-bottom:10px">
+    Custom DNS client built at the packet level (RFC 1035) — no external DNS library. Queries a public
+    resolver directly (stub resolver pattern) and parses responses including name compression.
+  </p>
+  <table class="pattern-table">
+    <tr><th>Type</th><th>What it reveals</th></tr>
+    <tr><td><code>A / AAAA</code></td><td>IPv4/IPv6 address(es) the domain points to</td></tr>
+    <tr><td><code>MX</code></td><td>Mail server(s) — reveals email provider (Google Workspace, M365, etc.)</td></tr>
+    <tr><td><code>TXT</code></td><td>SPF records, domain verification codes, DKIM selectors</td></tr>
+    <tr><td><code>NS</code></td><td>Authoritative nameservers — reveals DNS/hosting provider</td></tr>
+    <tr><td><code>SOA</code></td><td>Zone administration details, serial number (change tracking)</td></tr>
+    <tr><td><code>CAA</code></td><td>Which Certificate Authorities are authorized to issue certs</td></tr>
+  </table>
+</div>
+
+<div class="card">
+  <div class="card-title"><i class="fa-solid fa-sitemap"></i> Subdomain Enumeration</div>
+  <p style="font-size:12.5px;color:var(--text-mid);margin-bottom:6px">
+    <strong style="color:var(--text-hi)">Passive:</strong> Certificate Transparency logs via crt.sh.
+    Every publicly-trusted TLS certificate issued since ~2018 is logged publicly — searching these logs
+    reveals every subdomain anyone has ever requested a certificate for, including forgotten staging/dev
+    subdomains, without sending a single packet to the target.
+  </p>
+  <p style="font-size:12.5px;color:var(--text-mid)">
+    <strong style="color:var(--text-hi)">Active:</strong> DNS resolution of ~70 common subdomain prefixes
+    (www, mail, admin, staging, vpn, etc.) — catches subdomains that exist but never got a public certificate.
+  </p>
+</div>
+
+<div class="card">
+  <div class="card-title"><i class="fa-solid fa-globe"></i> HTTP Fingerprinting</div>
+  <p style="font-size:12.5px;color:var(--text-mid);margin-bottom:10px">
+    Detects technology stack from response headers, HTML content, cookies, and meta generator tags —
+    the same passive signals "view source" reveals. Also checks for well-known files
+    (<code>robots.txt</code>, <code>sitemap.xml</code>, <code>security.txt</code>) and standard security headers.
+  </p>
+</div>
+
+<div class="card">
+  <div class="card-title"><i class="fa-solid fa-envelope"></i> Email Discovery</div>
+  <p style="font-size:12.5px;color:var(--text-mid)">
+    Extracts email addresses that already appear on the target's own public pages (homepage, /contact,
+    /about, /team) — including simple de-obfuscation of "user [at] domain [dot] com" patterns.
+    <strong style="color:var(--text-hi)">Never guesses or generates likely addresses</strong> — only
+    reports what's actually published.
+  </p>
+</div>
+
+<div class="card">
+  <div class="card-title"><i class="fa-solid fa-location-dot"></i> IP Intelligence</div>
+  <p style="font-size:12.5px;color:var(--text-mid)">
+    Geolocation and hosting organization/ASN via ip-api.com (free tier), plus reverse DNS (PTR record)
+    lookup via our own DNS module — so hostname info is still available even if the geolocation API is unreachable.
+  </p>
+</div>
+
+{% endblock %}

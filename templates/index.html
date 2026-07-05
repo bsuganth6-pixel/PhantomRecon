@@ -1,0 +1,206 @@
+{% extends "base.html" %}
+{% block title %}Full Recon — PhantomRecon{% endblock %}
+{% block content %}
+
+<div class="card">
+  <div class="card-title"><i class="fa-solid fa-satellite-dish"></i> Domain Reconnaissance</div>
+  <p style="color:var(--text-mid);font-size:13px;margin-bottom:18px">
+    Aggregates WHOIS, DNS records, subdomain enumeration (certificate transparency + active scan),
+    HTTP fingerprinting, and public email discovery for a target domain. Passive OSINT only — uses
+    publicly available data sources, the same information any visitor or search engine already sees.
+  </p>
+
+  <div class="field">
+    <label>Target Domain</label>
+    <input type="text" id="domainInput" placeholder="example.com" onkeydown="if(event.key==='Enter') runRecon()">
+  </div>
+
+  <div class="options-grid">
+    <label class="checkbox-row"><input type="checkbox" id="skipWhois"> Skip WHOIS</label>
+    <label class="checkbox-row"><input type="checkbox" id="skipSubdomains"> Skip Subdomains</label>
+    <label class="checkbox-row"><input type="checkbox" id="skipHttp"> Skip HTTP Fingerprint</label>
+    <label class="checkbox-row"><input type="checkbox" id="skipEmails"> Skip Email Discovery</label>
+    <label class="checkbox-row"><input type="checkbox" id="skipIpIntel"> Skip IP Intel</label>
+    <label class="checkbox-row"><input type="checkbox" id="skipActiveScan"> Passive Only (skip active DNS scan)</label>
+  </div>
+
+  <button class="btn btn-primary" id="reconBtn" onclick="runRecon()">
+    <i class="fa-solid fa-magnifying-glass"></i> Run Reconnaissance
+  </button>
+  <div class="loader" id="loader"><div class="spinner"></div> Running reconnaissance — this can take 15-30s...</div>
+</div>
+
+<div id="results"></div>
+
+{% endblock %}
+{% block scripts %}
+<script>
+async function runRecon() {
+  const domain = document.getElementById("domainInput").value.trim();
+  if (!domain) { PR.toast("Enter a domain.", "error"); return; }
+
+  const btn = document.getElementById("reconBtn");
+  const loader = document.getElementById("loader");
+  PR.setLoading(loader, btn, true);
+  document.getElementById("results").innerHTML = "";
+
+  const r = await PR.postJSON("/api/recon", {
+    domain,
+    skip_whois: document.getElementById("skipWhois").checked,
+    skip_subdomains: document.getElementById("skipSubdomains").checked,
+    skip_http: document.getElementById("skipHttp").checked,
+    skip_emails: document.getElementById("skipEmails").checked,
+    skip_ip_intel: document.getElementById("skipIpIntel").checked,
+    skip_active_subdomain_scan: document.getElementById("skipActiveScan").checked,
+  });
+
+  PR.setLoading(loader, btn, false);
+
+  if (r.error) { PR.toast(r.error, "error"); return; }
+  render(r);
+}
+
+function render(r) {
+  let html = "";
+
+  // ── Exposure Findings (top summary) ──
+  html += `<div class="card result-block">
+    <div class="card-title"><i class="fa-solid fa-list-check"></i> Exposure Findings
+      <span class="badge-count">${r.exposure_findings.length}</span>
+    </div>
+    ${r.exposure_findings.length ? r.exposure_findings.map(f => PR.finding(f)).join("") :
+      '<div class="empty-state"><i class="fa-solid fa-shield-check"></i><p>No notable exposure findings.</p></div>'}
+  </div>`;
+
+  // ── DNS ──
+  html += `<div class="card result-block">
+    <div class="card-title"><i class="fa-solid fa-server"></i> DNS Records</div>
+    ${PR.renderDnsRecords(r.dns)}
+  </div>`;
+
+  // ── WHOIS ──
+  if (r.whois !== null) {
+    html += `<div class="card result-block">
+      <div class="card-title"><i class="fa-solid fa-id-card"></i> WHOIS
+        ${PR.statusPill(r.whois.success, false)}
+      </div>`;
+    if (r.whois.success) {
+      const f = r.whois.fields;
+      html += `<table class="detail-table">
+        <tr><th>Registrar</th><td>${PR.esc(f.registrar || '—')}</td></tr>
+        <tr><th>Created</th><td>${PR.esc(f.creation_date || '—')}</td></tr>
+        <tr><th>Expires</th><td>${PR.esc(f.expiry_date || '—')}</td></tr>
+        <tr><th>Updated</th><td>${PR.esc(f.updated_date || '—')}</td></tr>
+        <tr><th>Name Servers</th><td>${f.name_servers && f.name_servers.length ? f.name_servers.join(', ') : '—'}</td></tr>
+        <tr><th>Privacy Protected</th><td>${r.whois.privacy_protected ? '✓ Yes' : '⚠ No — registrant info may be public'}</td></tr>
+        <tr><th>Servers Queried</th><td style="font-size:10.5px">${r.whois.servers_queried.join(' → ')}</td></tr>
+      </table>`;
+    } else {
+      html += `<p style="font-size:12.5px;color:var(--text-mid)">${PR.esc(r.whois.error)}</p>`;
+    }
+    html += `</div>`;
+  }
+
+  // ── Subdomains ──
+  if (r.subdomains !== null) {
+    const s = r.subdomains;
+    html += `<div class="card result-block">
+      <div class="card-title"><i class="fa-solid fa-sitemap"></i> Subdomains
+        <span class="badge-count">${s.total_unique}</span>
+      </div>`;
+    if (s.total_unique > 0) {
+      const sensitiveKeywords = ["staging","dev","test","admin","internal","backup","old","vpn"];
+      const chips = (s.verified || s.all_unique_subdomains.map(sub => ({subdomain: sub, alive: null}))).map(v => {
+        const isSensitive = sensitiveKeywords.some(k => v.subdomain.includes(k));
+        const cls = v.alive === false ? "dead" : (isSensitive ? "sensitive" : "alive");
+        const icon = v.alive === false ? "circle-xmark" : (isSensitive ? "triangle-exclamation" : "circle-check");
+        return `<span class="sub-chip ${cls}"><i class="fa-solid fa-${icon}"></i>${PR.esc(v.subdomain)}</span>`;
+      }).join("");
+      html += `<div>${chips}</div>`;
+      if (!s.crtsh.success) {
+        html += `<p style="font-size:11.5px;color:var(--text-low);margin-top:10px"><i class="fa-solid fa-circle-info"></i> Passive (crt.sh) lookup unavailable: ${PR.esc(s.crtsh.error)} — results below are from active DNS scanning only.</p>`;
+      }
+    } else {
+      html += `<div class="empty-state"><i class="fa-solid fa-sitemap"></i><p>No subdomains discovered.</p></div>`;
+    }
+    html += `</div>`;
+  }
+
+  // ── HTTP Fingerprint ──
+  if (r.http !== null) {
+    html += `<div class="card result-block">
+      <div class="card-title"><i class="fa-solid fa-globe"></i> HTTP Fingerprint
+        ${PR.statusPill(r.http.success, false)}
+      </div>`;
+    if (r.http.success) {
+      html += `<table class="detail-table">
+        <tr><th>Final URL</th><td>${PR.esc(r.http.final_url)}</td></tr>
+        <tr><th>Status Code</th><td>${r.http.status_code}</td></tr>
+        <tr><th>Title</th><td>${PR.esc(r.http.title || '—')}</td></tr>
+        <tr><th>Server</th><td>${PR.esc(r.http.server_header || '—')}</td></tr>
+        <tr><th>Powered By</th><td>${PR.esc(r.http.powered_by || '—')}</td></tr>
+      </table>`;
+      if (r.http.technologies && r.http.technologies.length) {
+        html += `<div style="margin-top:12px">${r.http.technologies.map(t => `<span class="tech-tag">${PR.esc(t)}</span>`).join("")}</div>`;
+      }
+    } else {
+      html += `<p style="font-size:12.5px;color:var(--text-mid)">${PR.esc(r.http.error)}</p>`;
+    }
+    html += `</div>`;
+  }
+
+  // ── Common Paths ──
+  if (r.common_paths) {
+    const existing = r.common_paths.filter(p => p.exists);
+    html += `<div class="card result-block">
+      <div class="card-title"><i class="fa-solid fa-file-lines"></i> Well-Known Files
+        <span class="badge-count">${existing.length}/${r.common_paths.length}</span>
+      </div>
+      ${r.common_paths.map(p => `
+        <div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.04);font-size:12.5px">
+          <span class="mono" style="font-family:var(--font-mono)">${PR.esc(p.path)}</span>
+          <span style="color:${p.exists ? 'var(--green)' : 'var(--text-low)'}">${p.exists ? '✓ Found' : '— Not found'}</span>
+        </div>`).join("")}
+    </div>`;
+  }
+
+  // ── Emails ──
+  if (r.emails !== null) {
+    html += `<div class="card result-block">
+      <div class="card-title"><i class="fa-solid fa-envelope"></i> Public Email Addresses
+        <span class="badge-count">${r.emails.total_found}</span>
+      </div>`;
+    if (r.emails.total_found > 0) {
+      html += `<div>${r.emails.all_emails.map(e => `<span class="email-chip"><i class="fa-solid fa-at"></i>${PR.esc(e)}</span>`).join("")}</div>`;
+    } else {
+      html += `<div class="empty-state"><i class="fa-solid fa-envelope"></i><p>No email addresses found on checked pages.</p></div>`;
+    }
+    html += `</div>`;
+  }
+
+  // ── IP Intel ──
+  if (r.ip_intel !== null && r.ip_intel.success) {
+    html += `<div class="card result-block">
+      <div class="card-title"><i class="fa-solid fa-location-dot"></i> IP Intelligence</div>`;
+    r.ip_intel.reports.forEach(rep => {
+      html += `<table class="detail-table" style="margin-bottom:14px">
+        <tr><th>IP Address</th><td>${PR.esc(rep.ip)}</td></tr>
+        <tr><th>Reverse DNS</th><td>${PR.esc(rep.reverse_dns || '—')}</td></tr>`;
+      if (rep.geolocation.success) {
+        const g = rep.geolocation;
+        html += `
+        <tr><th>Location</th><td>${PR.esc(g.city)}, ${PR.esc(g.region)}, ${PR.esc(g.country)}</td></tr>
+        <tr><th>ISP / Org</th><td>${PR.esc(g.isp)}</td></tr>
+        <tr><th>ASN</th><td>${PR.esc(g.asn)}</td></tr>`;
+      } else {
+        html += `<tr><th>Geolocation</th><td style="color:var(--text-low)">${PR.esc(rep.geolocation.error)}</td></tr>`;
+      }
+      html += `</table>`;
+    });
+    html += `</div>`;
+  }
+
+  document.getElementById("results").innerHTML = html;
+}
+</script>
+{% endblock %}
